@@ -1,7 +1,7 @@
 from enum import Enum, auto
 
-from config import CacheConfig
-from utils.counter import Counter
+from mini_infer.config import CacheConfig, ScheduleConfig
+from mini_infer.utils.counter import Counter
 
 
 class SequenceStatus(Enum):
@@ -13,13 +13,20 @@ class SequenceStatus(Enum):
 class Sequence:
     _seq_id_counter = Counter(start=0)
 
-    def __init__(self, token_ids: list[int]):
+    def __init__(self,
+                 token_ids: list[int],
+                 max_tokens: int = 64,
+                 ignore_eos: bool = False):
+        assert len(token_ids) <= ScheduleConfig.max_num_batched_tokens_
         self.seq_id_: int = Sequence._seq_id_counter()
-        self.token_ids_: list[int] = token_ids
+        self.token_ids_: list[int] = list(token_ids)
+        self.num_prompt_tokens_: int = len(token_ids)
         self.status_: SequenceStatus = SequenceStatus.WAITING
         self.block_table_: list[int] = []
         self.num_cached_tokens_: int = 0
         self.num_scheduled_tokens: int = 0
+        self.max_tokens_ = max_tokens
+        self.ignore_eos_ = ignore_eos
 
     def append_token(self, token_id: int):
         self.token_ids_.append(token_id)
@@ -42,3 +49,7 @@ class Sequence:
             return 0
         block_size = CacheConfig.block_size_
         return len(self.token_ids_) - (self.num_blocks - 1) * block_size
+
+    @property
+    def num_completion_tokens(self) -> int:
+        return len(self.token_ids_) - self.num_prompt_tokens_

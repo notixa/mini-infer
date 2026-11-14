@@ -1,7 +1,7 @@
 from collections import deque
 
-from config import CacheConfig
-from engine.sequence import Sequence
+from mini_infer.config import CacheConfig
+from mini_infer.engine.sequence import Sequence
 
 
 class Block:
@@ -15,7 +15,10 @@ class Block:
 
 class BlockManager:
 
-    def __init__(self, num_blocks: int):
+    def __init__(self, num_blocks: int, cache_config: CacheConfig | None = None):
+        if cache_config is None:
+            cache_config = CacheConfig()
+        self.cache_config_: CacheConfig = cache_config
         self.blocks_ = [Block(i) for i in range(num_blocks)]
         self.free_block_ids_: deque[int] = deque(range(num_blocks))
         self.used_block_ids_: set = set()
@@ -45,12 +48,12 @@ class BlockManager:
         seq.block_table_.clear()
 
     def can_append(self, seq: Sequence):
-        block_size = CacheConfig.block_size_
+        block_size = self.cache_config_.block_size_
         if len(seq.token_ids_) % block_size == 1:
             return not len(self.free_block_ids_) <= 0
         return True
 
     def may_append(self, seq: Sequence):
-        block_size = CacheConfig.block_size_
+        block_size = self.cache_config_.block_size_
         if len(seq.token_ids_) % block_size == 1:
             seq.block_table_.append(self._alloc_block())

@@ -1,6 +1,6 @@
-from config import CacheConfig
-from engine.block_manager import BlockManager
-from engine.sequence import Sequence, SequenceStatus
+from mini_infer.config import CacheConfig
+from mini_infer.engine.block_manager import BlockManager
+from mini_infer.engine.sequence import Sequence, SequenceStatus
 
 
 def assert_block_pool_invariant(bm: BlockManager, total_blocks: int) -> None:
