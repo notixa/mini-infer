@@ -59,9 +59,12 @@ class ModelRunner:
         slot_mapping = torch.tensor(slot_mapping,
                                     dtype=torch.int32,
                                     device=self.device_config_.device_)
-        block_tables = torch.tensor(block_tables,
-                                    dtype=torch.int32,
-                                    device=self.device_config_.device_)
+        if sum_seqlens_q < sum_seqlens_k:
+            block_tables = torch.tensor(block_tables,
+                                        dtype=torch.int32,
+                                        device=self.device_config_.device_)
+        else:
+            block_tables = None
         set_context(
             is_prefill=True,
             cu_seqlens_q=cu_seqlens_q,

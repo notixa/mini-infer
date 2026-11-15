@@ -57,15 +57,15 @@ def test_sequence_block_math_boundaries() -> None:
 
 def test_can_allocate_exact_and_insufficient_capacity() -> None:
     bs = CacheConfig.block_size_
-    bm = BlockManager(num_blocks=4)
+    bm = BlockManager(num_blocks=2)
 
-    seq_3_blocks = Sequence(list(range(bs * 2 + 1)))  # needs 3 blocks
-    seq_4_blocks = Sequence(list(range(bs * 4)))      # needs 4 blocks (exact match)
-    seq_5_blocks = Sequence(list(range(bs * 4 + 1)))  # needs 5 blocks (exceeds pool)
+    seq_1_block = Sequence(list(range(bs)))          # needs 1 block
+    seq_2_blocks = Sequence(list(range(bs * 2)))     # needs 2 blocks (exact match)
+    seq_3_blocks = Sequence(list(range(bs * 2 + 1))) # needs 3 blocks (exceeds pool)
 
-    assert bm.can_allocate(seq_3_blocks) is True
-    assert bm.can_allocate(seq_4_blocks) is True
-    assert bm.can_allocate(seq_5_blocks) is False
+    assert bm.can_allocate(seq_1_block) is True
+    assert bm.can_allocate(seq_2_blocks) is True
+    assert bm.can_allocate(seq_3_blocks) is False
 
 
 def test_allocate_and_deallocate_conservation_and_reverse_free() -> None:
