@@ -1,6 +1,6 @@
 from enum import Enum, auto
 
-from mini_infer.config import CacheConfig, ScheduleConfig
+from mini_infer.config.engine_config import CacheConfig, ScheduleConfig
 from mini_infer.utils.counter import Counter
 
 

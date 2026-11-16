@@ -1,6 +1,6 @@
 import torch
 
-from mini_infer.config import CacheConfig, DeviceConfig
+from mini_infer.config.engine_config import CacheConfig, DeviceConfig
 from mini_infer.engine.sequence import Sequence
 from mini_infer.utils.context import set_context
 

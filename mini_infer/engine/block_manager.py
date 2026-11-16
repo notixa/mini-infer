@@ -1,6 +1,6 @@
 from collections import deque
 
-from mini_infer.config import CacheConfig
+from mini_infer.config.engine_config import CacheConfig
 from mini_infer.engine.sequence import Sequence
 
 

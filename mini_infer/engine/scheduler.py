@@ -1,6 +1,6 @@
 from collections import deque
 
-from mini_infer.config import ScheduleConfig
+from mini_infer.config.engine_config import ScheduleConfig
 from mini_infer.engine.block_manager import BlockManager
 from mini_infer.engine.sequence import Sequence, SequenceStatus
 
