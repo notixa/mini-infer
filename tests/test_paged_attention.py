@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from mini_infer.config import CacheConfig
+from mini_infer.config.engine_config import CacheConfig
 from mini_infer.engine.block_manager import BlockManager
 from mini_infer.engine.model_runner import ModelRunner
 from mini_infer.engine.sequence import Sequence
@@ -17,7 +17,6 @@ def sdpa_reference(
     scale: float,
 ) -> torch.Tensor:
     """Reference causal GQA attention for a single sequence: inputs [seq_len, heads, head_dim]."""
-    # SDPA expects [batch, heads, seq_len, head_dim]
     q_b = q.transpose(0, 1).unsqueeze(0)
     k_b = k.transpose(0, 1).unsqueeze(0)
     v_b = v.transpose(0, 1).unsqueeze(0)
@@ -43,7 +42,6 @@ def test_store_kvcache_noncontiguous_nonpow2_and_padding_slot() -> None:
     head_dim = 64
     num_tokens = 5
 
-    # Fused qkv projection layout -> k, v have non-contiguous stride(0)
     qkv = torch.randn(
         num_tokens,
         (num_heads + 2 * num_kv_heads) * head_dim,
@@ -63,7 +61,6 @@ def test_store_kvcache_noncontiguous_nonpow2_and_padding_slot() -> None:
     )
     v_cache = torch.full_like(k_cache, -9.0)
 
-    # Include -1 padding slot at index 2
     slots = [3, 257, -1, 0, 511]
     slot_mapping = torch.tensor(slots, device=device, dtype=torch.int32)
 
@@ -76,7 +73,6 @@ def test_store_kvcache_noncontiguous_nonpow2_and_padding_slot() -> None:
         assert torch.equal(k_cache[bid, off], k[tok_idx])
         assert torch.equal(v_cache[bid, off], v[tok_idx])
 
-    # Unwritten slots must stay untouched (no out-of-bounds corruption from -1 or mask)
     written_set = {s for s in slots if s != -1}
     for bid in range(num_blocks):
         for off in range(block_size):
@@ -87,7 +83,7 @@ def test_store_kvcache_noncontiguous_nonpow2_and_padding_slot() -> None:
 
 
 def test_model_runner_prepare_prefill_and_decode_context() -> None:
-    bs = CacheConfig.block_size_  # 256
+    bs = CacheConfig.block_size
     bm = BlockManager(num_blocks=6)
     runner = ModelRunner()
 
@@ -99,21 +95,20 @@ def test_model_runner_prepare_prefill_and_decode_context() -> None:
     try:
         runner.prepare_prefill_context([s0, s1])
         ctx = get_context()
-        assert ctx.is_prefill_ is True
-        assert ctx.cu_seqlens_q_.tolist() == [0, 300, 556]
-        assert ctx.cu_seqlens_k_.tolist() == [0, 300, 556]
-        assert ctx.max_seqlen_q_ == 300
-        assert ctx.max_seqlen_k_ == 300
-        assert ctx.block_tables_ is None
+        assert ctx.is_prefill is True
+        assert ctx.cu_seqlens_q.tolist() == [0, 300, 556]
+        assert ctx.cu_seqlens_k.tolist() == [0, 300, 556]
+        assert ctx.max_seqlen_q == 300
+        assert ctx.max_seqlen_k == 300
+        assert ctx.block_tables is None
 
         expected_slots = (
-            list(range(s0.block_table_[0] * bs, s0.block_table_[0] * bs + bs))
-            + list(range(s0.block_table_[1] * bs, s0.block_table_[1] * bs + 44))
-            + list(range(s1.block_table_[0] * bs, s1.block_table_[0] * bs + bs))
+            list(range(s0.block_table[0] * bs, s0.block_table[0] * bs + bs))
+            + list(range(s0.block_table[1] * bs, s0.block_table[1] * bs + 44))
+            + list(range(s1.block_table[0] * bs, s1.block_table[0] * bs + bs))
         )
-        assert ctx.slot_mapping_.tolist() == expected_slots
+        assert ctx.slot_mapping.tolist() == expected_slots
 
-        # Decode step: s1 crosses 256 -> 257 and allocates a 2nd block
         s0.append_token(900)
         s1.append_token(901)
         bm.may_append(s0)
@@ -121,13 +116,13 @@ def test_model_runner_prepare_prefill_and_decode_context() -> None:
 
         runner.prepare_decode_context([s0, s1])
         ctx = get_context()
-        assert ctx.is_prefill_ is False
-        assert ctx.context_lens_.tolist() == [301, 257]
-        assert ctx.block_tables_.shape == (2, 2)
-        assert ctx.block_tables_.tolist() == [s0.block_table_, s1.block_table_]
-        assert ctx.slot_mapping_.tolist() == [
-            s0.block_table_[-1] * bs + 44,
-            s1.block_table_[-1] * bs + 0,
+        assert ctx.is_prefill is False
+        assert ctx.context_lens.tolist() == [301, 257]
+        assert ctx.block_tables.shape == (2, 2)
+        assert ctx.block_tables.tolist() == [s0.block_table, s1.block_table]
+        assert ctx.slot_mapping.tolist() == [
+            s0.block_table[-1] * bs + 44,
+            s1.block_table[-1] * bs + 0,
         ]
     finally:
         reset_context()
@@ -137,7 +132,7 @@ def test_model_runner_prepare_prefill_and_decode_context() -> None:
 def test_paged_attention_prefill_and_decode_matches_sdpa(dtype: torch.dtype) -> None:
     torch.manual_seed(42)
     device = "cuda"
-    bs = CacheConfig.block_size_  # 256
+    bs = CacheConfig.block_size
     num_blocks = 8
     num_heads = 8
     num_kv_heads = 2
@@ -149,20 +144,19 @@ def test_paged_attention_prefill_and_decode_matches_sdpa(dtype: torch.dtype) -> 
     attn = Attention(num_heads=num_heads, head_dim=head_dim, scale=scale, num_kv_heads=num_kv_heads)
     k_cache = torch.empty((num_blocks, bs, num_kv_heads, head_dim), device=device, dtype=dtype)
     v_cache = torch.empty_like(k_cache)
-    attn.k_cache_ = k_cache
-    attn.v_cache_ = v_cache
+    attn.k_cache = k_cache
+    attn.v_cache = v_cache
 
-    # Fragment physical blocks on purpose so s0/s1 get non-contiguous block_tables
     dummy = Sequence(list(range(bs)))
-    s0 = Sequence(list(range(bs - 1)))  # 255 tokens (crosses 256 boundary during decode!)
-    s1 = Sequence(list(range(bs + 4)))  # 260 tokens (spans 2 blocks, leaves -1 padding before s0 grows)
+    s0 = Sequence(list(range(bs - 1)))
+    s1 = Sequence(list(range(bs + 4)))
     bm.allocate(s0)
     bm.allocate(dummy)
     bm.allocate(s1)
-    bm.deallocate(dummy)  # free middle block so subsequent may_append reuses fragmented block
+    bm.deallocate(dummy)
 
     decode_steps = 4
-    total_lens = [len(s0.token_ids_) + decode_steps, len(s1.token_ids_) + decode_steps]
+    total_lens = [len(s0.token_ids) + decode_steps, len(s1.token_ids) + decode_steps]
     q_full = [torch.randn(L, num_heads, head_dim, device=device, dtype=dtype) for L in total_lens]
     k_full = [torch.randn(L, num_kv_heads, head_dim, device=device, dtype=dtype) for L in total_lens]
     v_full = [torch.randn(L, num_kv_heads, head_dim, device=device, dtype=dtype) for L in total_lens]
@@ -172,8 +166,7 @@ def test_paged_attention_prefill_and_decode_matches_sdpa(dtype: torch.dtype) -> 
     atol, rtol = (2e-3, 2e-3) if dtype == torch.float16 else (1.5e-2, 1.5e-2)
 
     try:
-        # 1. Prefill step
-        len0, len1 = len(s0.token_ids_), len(s1.token_ids_)
+        len0, len1 = len(s0.token_ids), len(s1.token_ids)
         q_prefill = torch.cat([q_full[0][:len0], q_full[1][:len1]], dim=0)
         k_prefill = torch.cat([k_full[0][:len0], k_full[1][:len1]], dim=0)
         v_prefill = torch.cat([v_full[0][:len0], v_full[1][:len1]], dim=0)
@@ -186,7 +179,6 @@ def test_paged_attention_prefill_and_decode_matches_sdpa(dtype: torch.dtype) -> 
         torch.testing.assert_close(out_prefill[:len0], ref_full[0][:len0], atol=atol, rtol=rtol)
         torch.testing.assert_close(out_prefill[len0:], ref_full[1][:len1], atol=atol, rtol=rtol)
 
-        # 2. Decode steps (s0 crosses 255 -> 256 -> 257 -> 258 -> 259 across block boundary)
         for step in range(decode_steps):
             pos0 = len0 + step
             pos1 = len1 + step
@@ -210,5 +202,5 @@ def test_paged_attention_prefill_and_decode_matches_sdpa(dtype: torch.dtype) -> 
         reset_context()
         bm.deallocate(s0)
         bm.deallocate(s1)
-        assert len(bm.used_block_ids_) == 0
-        assert len(bm.free_block_ids_) == num_blocks
+        assert len(bm.used_block_ids) == 0
+        assert len(bm.free_block_ids) == num_blocks

@@ -5,14 +5,14 @@ import torch
 
 @dataclass
 class Context:
-    is_prefill_: bool = False
-    cu_seqlens_q_: torch.Tensor | None = None
-    cu_seqlens_k_: torch.Tensor | None = None
-    max_seqlen_q_: int = 0
-    max_seqlen_k_: int = 0
-    slot_mapping_: torch.Tensor | None = None
-    context_lens_: torch.Tensor | None = None
-    block_tables_: torch.Tensor | None = None
+    is_prefill: bool = False
+    cu_seqlens_q: torch.Tensor | None = None
+    cu_seqlens_k: torch.Tensor | None = None
+    max_seqlen_q: int = 0
+    max_seqlen_k: int = 0
+    slot_mapping: torch.Tensor | None = None
+    context_lens: torch.Tensor | None = None
+    block_tables: torch.Tensor | None = None
 
 
 _CONTEXT = Context()
@@ -34,14 +34,14 @@ def set_context(
 ):
     global _CONTEXT
     _CONTEXT = Context(
-        is_prefill_=is_prefill,
-        cu_seqlens_q_=cu_seqlens_q,
-        cu_seqlens_k_=cu_seqlens_k,
-        max_seqlen_q_=max_seqlen_q,
-        max_seqlen_k_=max_seqlen_k,
-        slot_mapping_=slot_mapping,
-        context_lens_=context_lens,
-        block_tables_=block_tables,
+        is_prefill=is_prefill,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        slot_mapping=slot_mapping,
+        context_lens=context_lens,
+        block_tables=block_tables,
     )
 
 

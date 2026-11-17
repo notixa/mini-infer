@@ -18,12 +18,15 @@ class Qwen3Attention(torch.nn.Module):
         self.num_heads = config.num_attention_heads
         self.num_kv_heads = config.num_key_value_heads
         head_dim = getattr(config, "head_dim", config.hidden_size // self.num_heads)
-        self.q_size_ = self.num_heads * head_dim
-        self.kv_size_ = self.num_kv_heads * head_dim
+        self.q_size = self.num_heads * head_dim
+        self.kv_size = self.num_kv_heads * head_dim
         self.qkv_proj = torch.nn.Linear(config.hidden_size,
-                                        self.q_size_ + 2 * self.kv_size_,
+                                        self.q_size + 2 * self.kv_size,
                                         bias=config.attention_bias)
-        self.o_proj = torch.nn.Linear(self.q_size_, config.hidden_size, bias=False)
+
+        setattr(self.qkv_proj.weight, "weight_loader", self.weight_loader)  # noqa: B010
+
+        self.o_proj = torch.nn.Linear(self.q_size, config.hidden_size, bias=False)
         self.q_norm = RMSNorm(head_dim, eps=config.rms_norm_eps)
         self.k_norm = RMSNorm(head_dim, eps=config.rms_norm_eps)
         self.rotary_emb = RotaryEmbedding(head_dim, config.max_position_embeddings,
@@ -34,15 +37,15 @@ class Qwen3Attention(torch.nn.Module):
     def forward(self, positions: torch.Tensor,
                 hidden_states: torch.Tensor) -> torch.Tensor:
         qkv = self.qkv_proj(hidden_states)
-        q, k, v = qkv.split([self.q_size_, self.kv_size_, self.kv_size_], dim=-1)
+        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         q = einops.rearrange(q,
-                             "... (q_size) -> ... num_heads head_dim",
+                             "... (num_heads head_dim) -> ... num_heads head_dim",
                              num_heads=self.num_heads)
         k = einops.rearrange(k,
-                             "... (k_size) -> ... num_kv_heads head_dim",
+                             "... (num_kv_heads head_dim) -> ... num_kv_heads head_dim",
                              num_kv_heads=self.num_kv_heads)
         v = einops.rearrange(v,
-                             "... (v_size) -> ... num_kv_heads head_dim",
+                             "... (num_kv_heads head_dim) -> ... num_kv_heads head_dim",
                              num_kv_heads=self.num_kv_heads)
         q = self.q_norm(q)
         k = self.k_norm(k)
@@ -50,14 +53,37 @@ class Qwen3Attention(torch.nn.Module):
         o = self.attn(q, k, v)
         return self.o_proj(o.flatten(1, -1))
 
+    def weight_loader(
+        self,
+        param: torch.nn.Parameter,
+        loaded_weight: torch.Tensor,
+        loaded_shard_id: str,
+    ):
+        if loaded_shard_id == "q":
+            offset, size = 0, self.q_size
+        elif loaded_shard_id == "k":
+            offset, size = self.q_size, self.kv_size
+        elif loaded_shard_id == "v":
+            offset, size = self.q_size + self.kv_size, self.kv_size
+        else:
+            raise ValueError(f"Unknown shard_id: {loaded_shard_id}")
+
+        param_slice = param.data.narrow(0, offset, size)
+        assert param_slice.shape == loaded_weight.shape
+        param_slice.copy_(loaded_weight)
+
 
 class Qwen3MLP(torch.nn.Module):
 
     def __init__(self, config: Qwen3Config):
         super().__init__()
+        self.gate_up_size = config.intermediate_size
         self.gate_up_proj = torch.nn.Linear(config.hidden_size,
                                             2 * config.intermediate_size,
                                             bias=False)
+
+        setattr(self.gate_up_proj.weight, "weight_loader", self.weight_loader)
+
         self.down_proj = torch.nn.Linear(config.intermediate_size,
                                          config.hidden_size,
                                          bias=False)
@@ -65,6 +91,19 @@ class Qwen3MLP(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.down_proj(self.act_fn(self.gate_up_proj(x)))
+
+    def weight_loader(self, param: torch.nn.Parameter, loaded_weight: torch.Tensor,
+                      shard_id: int):
+        if shard_id == 0:
+            offset, size = 0, self.gate_up_size
+        elif shard_id == 1:
+            offset, size = self.gate_up_size, self.gate_up_size
+        else:
+            raise ValueError(f"Unknown shard_id: {shard_id}")
+
+        param_slice = param.data.narrow(0, offset, size)
+        assert param_slice.shape == loaded_weight.shape
+        param_slice.copy_(loaded_weight)
 
 
 class Qwen3DecoderLayer(torch.nn.Module):
@@ -122,12 +161,20 @@ class Qwen3ForCausalLM(torch.nn.Module):
         if config.tie_word_embeddings:
             self.lm_head.weight = self.model.embed_tokens.weight
 
+        self.packed_modules_mapping = {
+            "q_proj": ("qkv_proj", "q"),
+            "k_proj": ("qkv_proj", "k"),
+            "v_proj": ("qkv_proj", "v"),
+            "gate_proj": ("gate_up_proj", 0),
+            "up_proj": ("gate_up_proj", 1),
+        }
+
     def forward(self, input_ids: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
         return self.model(input_ids, positions)
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         context = get_context()
-        if context.is_prefill_ and context.cu_seqlens_q_ is not None:
-            last_indices = context.cu_seqlens_q_[1:] - 1
+        if context.is_prefill and context.cu_seqlens_q is not None:
+            last_indices = context.cu_seqlens_q[1:] - 1
             hidden_states = hidden_states[last_indices].contiguous()
         return self.lm_head(hidden_states)

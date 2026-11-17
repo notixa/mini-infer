@@ -67,15 +67,15 @@ class RMSNorm(torch.nn.Module):
 
     def __init__(self, head_dim: int, eps: float = 1e-5, dtype=None):
         super().__init__()
-        device = DeviceConfig.device_
+        device = DeviceConfig.device
         gain = torch.ones(head_dim, device=device, dtype=dtype)
-        self.head_dim_ = head_dim
-        self.eps_ = eps
+        self.head_dim = head_dim
+        self.eps = eps
         self.weight = torch.nn.Parameter(gain)
 
     def forward(self, x: torch.Tensor, residual: torch.Tensor | None = None):
         assert x.ndim in (2, 3)
-        assert x.shape[-1] == self.head_dim_
+        assert x.shape[-1] == self.head_dim
         assert x.stride(-1) == 1
         if residual is not None:
             assert residual.shape == x.shape
@@ -99,7 +99,7 @@ class RMSNorm(torch.nn.Module):
                 o,
                 x.stride(0),
                 o.stride(0),
-                self.eps_,
+                self.eps,
                 HEAD_DIM=HEAD_DIM,
                 BLOCK_DIM=triton.next_power_of_2(HEAD_DIM),
             )
@@ -117,7 +117,7 @@ class RMSNorm(torch.nn.Module):
                 x.stride(0),
                 residual.stride(0),
                 o.stride(0),
-                self.eps_,
+                self.eps,
                 HEAD_DIM=HEAD_DIM,
                 BLOCK_DIM=triton.next_power_of_2(HEAD_DIM),
             )

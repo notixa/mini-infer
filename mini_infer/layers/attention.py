@@ -61,12 +61,12 @@ class Attention(torch.nn.Module):
 
     def __init__(self, num_heads: int, head_dim: int, scale: float, num_kv_heads: int):
         super().__init__()
-        self.num_heads_ = num_heads
-        self.head_dim_ = head_dim
-        self.scale_ = scale
-        self.num_kv_heads_ = num_kv_heads
-        self.k_cache_ = torch.tensor([])
-        self.v_cache_ = torch.tensor([])
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.scale = scale
+        self.num_kv_heads = num_kv_heads
+        self.k_cache = torch.tensor([])
+        self.v_cache = torch.tensor([])
 
     def forward(self, q: torch.Tensor, k: torch.Tensor,
                 v: torch.Tensor) -> torch.Tensor:
@@ -76,34 +76,34 @@ class Attention(torch.nn.Module):
         assert q.dtype == k.dtype and q.dtype == v.dtype
         assert q.dtype is torch.float16 or q.dtype is torch.bfloat16
         context = get_context()
-        assert context.slot_mapping_ is not None
-        if self.k_cache_.numel() and self.v_cache_.numel():
-            store_kvcache(k, v, self.k_cache_, self.v_cache_, context.slot_mapping_)
-        if context.is_prefill_:
-            if context.block_tables_ is not None:
-                k = self.k_cache_
-                v = self.v_cache_
+        assert context.slot_mapping is not None
+        if self.k_cache.numel() and self.v_cache.numel():
+            store_kvcache(k, v, self.k_cache, self.v_cache, context.slot_mapping)
+        if context.is_prefill:
+            if context.block_tables is not None:
+                k = self.k_cache
+                v = self.v_cache
             o = flash_attn_varlen_func(
                 q,
                 k,
                 v,
-                context.cu_seqlens_q_,
-                context.cu_seqlens_k_,
-                context.max_seqlen_q_,
-                context.max_seqlen_k_,
-                block_table=context.block_tables_,
-                softmax_scale=self.scale_,
+                context.cu_seqlens_q,
+                context.cu_seqlens_k,
+                context.max_seqlen_q,
+                context.max_seqlen_k,
+                block_table=context.block_tables,
+                softmax_scale=self.scale,
                 causal=True,
             )
             o = cast(torch.Tensor, o)
         else:
             o = flash_attn_with_kvcache(
                 q.unsqueeze(1),
-                self.k_cache_,
-                self.v_cache_,
-                cache_seqlens=context.context_lens_,
-                block_table=context.block_tables_,
-                softmax_scale=self.scale_,
+                self.k_cache,
+                self.v_cache,
+                cache_seqlens=context.context_lens,
+                block_table=context.block_tables,
+                softmax_scale=self.scale,
                 causal=True,
             )
             o = cast(torch.Tensor, o)

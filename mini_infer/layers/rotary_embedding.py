@@ -24,9 +24,9 @@ class RotaryEmbedding(torch.nn.Module):
         base: float,
     ):
         super().__init__()
-        device = DeviceConfig.device_
+        device = DeviceConfig.device
         assert head_dim % 2 == 0
-        self.head_dim_ = head_dim
+        self.head_dim = head_dim
         inv_freq = 1.0 / (base**(torch.arange(0, head_dim, 2, dtype=torch.float32) /
                                  head_dim))
         t = torch.arange(max_position_embeddings, dtype=torch.float32)
@@ -45,7 +45,7 @@ class RotaryEmbedding(torch.nn.Module):
         assert q.ndim == positions.ndim + 2 and k.ndim == positions.ndim + 2
         assert q.shape[:positions.ndim] == positions.shape
         assert k.shape[:positions.ndim] == positions.shape
-        assert q.shape[-1] == self.head_dim_ and k.shape[-1] == self.head_dim_
+        assert q.shape[-1] == self.head_dim and k.shape[-1] == self.head_dim
 
         cos_sin = self.cos_sin_cache[positions]
         cos, sin = cos_sin.chunk(2, dim=-1)
