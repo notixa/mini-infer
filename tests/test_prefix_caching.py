@@ -35,9 +35,11 @@ def test_prefix_cache_active_reuse_and_last_block_excluded() -> None:
     seq1 = Sequence(prefix_2blocks + [9001, 9002], temperature=0.0)
     assert bm.can_allocate(seq1) == 0
     bm.allocate(seq1)
-    assert seq1.num_cached_tokens == 0
+    assert seq1.num_hashed_blocks == 0
+    assert seq1.num_computed_tokens == 0
+    seq1.num_computed_tokens = len(seq1.token_ids)
     bm.hash_blocks(seq1)
-    assert seq1.num_cached_tokens == bs * 2
+    assert seq1.num_hashed_blocks == 2
     assert len(bm.hash_to_block_id) == 2
     assert_block_pool_invariant(bm, total_blocks)
 
@@ -45,7 +47,8 @@ def test_prefix_cache_active_reuse_and_last_block_excluded() -> None:
     seq2 = Sequence(prefix_2blocks + [9999], temperature=0.0)
     assert bm.can_allocate(seq2) == 2
     bm.allocate(seq2)
-    assert seq2.num_cached_tokens == bs * 2
+    assert seq2.num_hashed_blocks == 2
+    assert seq2.num_computed_tokens == bs * 2
     assert seq2.block_table[:2] == seq1.block_table[:2]
     assert seq2.block_table[2] != seq1.block_table[2]
     for bid in seq1.block_table[:2]:
@@ -56,7 +59,8 @@ def test_prefix_cache_active_reuse_and_last_block_excluded() -> None:
     seq3 = Sequence(prefix_2blocks, temperature=0.0)
     assert bm.can_allocate(seq3) == 1
     bm.allocate(seq3)
-    assert seq3.num_cached_tokens == bs
+    assert seq3.num_hashed_blocks == 1
+    assert seq3.num_computed_tokens == bs
     assert seq3.block_table[0] == seq1.block_table[0]
     assert seq3.block_table[1] != seq1.block_table[1]
     assert_block_pool_invariant(bm, total_blocks)
@@ -74,6 +78,7 @@ def test_prefix_cache_lazy_eviction_and_revival() -> None:
     shared = list(range(bs))
     seq1 = Sequence(shared + [100], temperature=0.0)
     bm.allocate(seq1)
+    seq1.num_computed_tokens = len(seq1.token_ids)
     bm.hash_blocks(seq1)
     cached_bid = seq1.block_table[0]
 
@@ -81,7 +86,8 @@ def test_prefix_cache_lazy_eviction_and_revival() -> None:
     bm.deallocate(seq1)
     assert cached_bid in bm.free_block_ids
     assert bm.blocks[cached_bid].hash != -1
-    assert seq1.num_cached_tokens == 0
+    assert seq1.num_hashed_blocks == 0
+    assert seq1.num_computed_tokens == 0
     assert_block_pool_invariant(bm, total_blocks)
 
     # seq2 revives cached_bid from free_block_ids
@@ -89,7 +95,8 @@ def test_prefix_cache_lazy_eviction_and_revival() -> None:
     assert bm.can_allocate(seq2) == 1
     bm.allocate(seq2)
     assert seq2.block_table[0] == cached_bid
-    assert seq2.num_cached_tokens == bs
+    assert seq2.num_hashed_blocks == 1
+    assert seq2.num_computed_tokens == bs
     assert cached_bid in bm.used_block_ids
     assert cached_bid not in bm.free_block_ids
     assert bm.blocks[cached_bid].ref_count == 1
@@ -103,6 +110,7 @@ def test_prefix_cache_revival_respects_free_block_capacity() -> None:
     shared = list(range(bs))
     seq1 = Sequence(shared + [1], temperature=0.0)
     bm.allocate(seq1)
+    seq1.num_computed_tokens = len(seq1.token_ids)
     bm.hash_blocks(seq1)
     bm.deallocate(seq1)
 
@@ -125,6 +133,7 @@ def test_prefix_cache_fifo_eviction_cleans_hash_table() -> None:
     shared = list(range(bs))
     seq1 = Sequence(shared + [1], temperature=0.0)
     bm.allocate(seq1)
+    seq1.num_computed_tokens = len(seq1.token_ids)
     bm.hash_blocks(seq1)
     old_hash = bm.blocks[seq1.block_table[0]].hash
     assert old_hash in bm.hash_to_block_id
@@ -160,16 +169,16 @@ def test_scheduler_batched_token_budget_excludes_cached_prefix() -> None:
     sched.postprocess(scheduled, [12])
 
     # Now block 0 (256 tokens) is cached. Add two sequences each with 256 + 20 tokens.
-    # Each only has 20 uncached tokens, so both fit inside max_num_batched_tokens=320!
+    # Under mixed scheduling, seq1 (decode: 1 tok) + seq2 (20 new toks) + seq3 (20 new toks) = 41 <= 320!
     seq2 = Sequence(shared + [20] * 20, temperature=0.0, max_tokens=2)
     seq3 = Sequence(shared + [30] * 20, temperature=0.0, max_tokens=2)
     sched.add(seq2)
     sched.add(seq3)
     scheduled, is_prefill = sched.schedule()
     assert is_prefill
-    assert scheduled == [seq2, seq3]
-    assert seq2.num_cached_tokens == bs
-    assert seq3.num_cached_tokens == bs
+    assert scheduled == [seq1, seq2, seq3]
+    assert seq2.num_computed_tokens == bs
+    assert seq3.num_computed_tokens == bs
 
 
 @pytest.mark.skipif(
@@ -207,7 +216,7 @@ def test_prefix_caching_qwen3_gpu_exact_match() -> None:
         engine.add_request(prompt2, sp)
         seqs, is_prefill = engine.scheduler.schedule()
         assert is_prefill
-        assert seqs[0].num_cached_tokens == (len(shared_ids) // bs) * bs
+        assert seqs[0].num_computed_tokens == (len(shared_ids) // bs) * bs
         token_ids = engine.model_runner.run(seqs, is_prefill)
         engine.scheduler.postprocess(seqs, token_ids)
         while not engine.scheduler.is_finished:
@@ -224,7 +233,7 @@ def test_prefix_caching_qwen3_gpu_exact_match() -> None:
         engine.add_request(prompt2, sp)
         seqs_cold, is_prefill_cold = engine.scheduler.schedule()
         assert is_prefill_cold
-        assert seqs_cold[0].num_cached_tokens == 0
+        assert seqs_cold[0].num_computed_tokens == 0
         token_ids_cold = engine.model_runner.run(seqs_cold, is_prefill_cold)
         engine.scheduler.postprocess(seqs_cold, token_ids_cold)
         while not engine.scheduler.is_finished:

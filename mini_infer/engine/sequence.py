@@ -18,15 +18,16 @@ class Sequence:
                  temperature: float,
                  max_tokens: int = 64,
                  ignore_eos: bool = False):
-        assert len(token_ids) <= ScheduleConfig.max_num_batched_tokens
+        assert len(token_ids) <= ScheduleConfig.max_model_len
         self.seq_id: int = Sequence._seq_id_counter()
         self.temperature = temperature
         self.token_ids: list[int] = list(token_ids)
         self.num_prompt_tokens: int = len(token_ids)
         self.status: SequenceStatus = SequenceStatus.WAITING
         self.block_table: list[int] = []
-        self.num_cached_tokens: int = 0
+        self.num_hashed_blocks: int = 0
         self.num_scheduled_tokens: int = 0
+        self.num_computed_tokens: int = 0
         self.max_tokens = max_tokens
         self.ignore_eos = ignore_eos
 

@@ -44,8 +44,8 @@ class BlockManager:
 
     def hash_blocks(self, seq: Sequence):
         block_size = self.cache_config.block_size
-        start = seq.num_cached_tokens // block_size
-        end = len(seq.token_ids) // block_size
+        start = seq.num_hashed_blocks
+        end = seq.num_computed_tokens // block_size
         if start < end:
             h = self.blocks[seq.block_table[start - 1]].hash if start > 0 else -1
             for i in range(start, end):
@@ -56,7 +56,7 @@ class BlockManager:
                 block.hash = h
                 block.token_ids = token_ids
                 self.hash_to_block_id[h] = block_id
-                seq.num_cached_tokens += block_size
+                seq.num_hashed_blocks += 1
 
     def _alloc_block(self) -> int:
         block_id = self.free_block_ids.popleft()
@@ -109,7 +109,8 @@ class BlockManager:
         for _ in range(cached_block_num, seq.num_blocks):
             seq.append_block_table(self._alloc_block())
 
-        seq.num_cached_tokens = self.cache_config.block_size * cached_block_num
+        seq.num_hashed_blocks = cached_block_num
+        seq.num_computed_tokens = cached_block_num * self.cache_config.block_size
 
     def deallocate(self, seq: Sequence):
         for block_id in reversed(seq.block_table):
@@ -119,15 +120,15 @@ class BlockManager:
                 self.free_block_ids.append(block_id)
 
         seq.block_table.clear()
-        seq.num_cached_tokens = 0
+        seq.num_hashed_blocks = 0
+        seq.num_computed_tokens = 0
+        seq.num_scheduled_tokens = 0
 
     def can_append(self, seq: Sequence):
-        block_size = self.cache_config.block_size
-        if len(seq.token_ids) % block_size == 1:
-            return not len(self.free_block_ids) <= 0
+        if len(seq.block_table) < seq.num_blocks:
+            return len(self.free_block_ids) >= seq.num_blocks - len(seq.block_table)
         return True
 
     def may_append(self, seq: Sequence):
-        block_size = self.cache_config.block_size
-        if len(seq.token_ids) % block_size == 1:
+        while len(seq.block_table) < seq.num_blocks:
             seq.block_table.append(self._alloc_block())

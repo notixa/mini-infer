@@ -35,8 +35,8 @@ class ModelRunner:
         prev_dtype = torch.get_default_dtype()
         torch.set_default_dtype(self.model_dtype)
         try:
-            self.model = get_model(model_arch, self.model_config).to(
-                self.device_config.device)
+            self.model = get_model(model_arch,
+                                   self.model_config).to(self.device_config.device)
         finally:
             torch.set_default_dtype(prev_dtype)
         load_weight(self.model, model_path)
@@ -81,6 +81,7 @@ class ModelRunner:
         return num_blocks
 
     def prepare_prefill_context(self, seqs: list[Sequence]):
+        block_size = self.cache_config.block_size
         sum_seqlens_q = 0
         sum_seqlens_k = 0
         cu_seqlens_q = [0]
@@ -92,11 +93,13 @@ class ModelRunner:
         input_ids = []
         positions = []
         for seq in seqs:
-            seqlen_q = len(seq.token_ids) - seq.num_cached_tokens
-            seqlen_k = len(seq.token_ids)
-            input_ids.extend(seq.token_ids[seq.num_cached_tokens:])
-            positions.extend(
-                [id for id in range(seq.num_cached_tokens, len(seq.token_ids))])
+            start_pos = seq.num_computed_tokens
+            seqlen_q = seq.num_scheduled_tokens if seq.num_scheduled_tokens > 0 else len(
+                seq.token_ids) - start_pos
+            end_pos = start_pos + seqlen_q
+            seqlen_k = end_pos
+            input_ids.extend(seq.token_ids[start_pos:end_pos])
+            positions.extend([id for id in range(start_pos, end_pos)])
             sum_seqlens_q += seqlen_q
             sum_seqlens_k += seqlen_k
             cu_seqlens_q.append(sum_seqlens_q)
@@ -104,20 +107,16 @@ class ModelRunner:
             max_seqlen_q = max(max_seqlen_q, seqlen_q)
             max_seqlen_k = max(max_seqlen_k, seqlen_k)
 
-            max_num_blocks = max(max_num_blocks, seq.num_blocks)
+            max_num_blocks = max(max_num_blocks, len(seq.block_table))
             if not seq.block_table: continue
-            for i in range(seq.num_cached_tokens // self.cache_config.block_size,
-                           seq.num_blocks):
-                bid = seq.block_table[i]
-                if i != seq.num_blocks - 1:
-                    valid_num_tokens = self.cache_config.block_size
-                else:
-                    valid_num_tokens = seq.last_block_num_tokens
+            for i in range(start_pos, end_pos):
+                bid = seq.block_table[i // block_size]
                 base_offset = bid * self.cache_config.block_size
-                slot_mapping.extend(range(base_offset, base_offset + valid_num_tokens))
+                slot_mapping.append(base_offset + i % block_size)
 
         block_tables = [
-            seq.block_table + [-1] * (max_num_blocks - seq.num_blocks) for seq in seqs
+            seq.block_table + [-1] * (max_num_blocks - len(seq.block_table))
+            for seq in seqs
         ]
         cu_seqlens_q = torch.tensor(cu_seqlens_q,
                                     dtype=torch.int32,

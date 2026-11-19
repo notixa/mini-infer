@@ -42,10 +42,16 @@ def run_pass(
         seqs, is_prefill = engine.scheduler.schedule()
         if is_prefill:
             step_prefill_tokens = sum(
-                len(s.token_ids) - s.num_cached_tokens for s in seqs
+                s.num_scheduled_tokens
+                for s in seqs
+                if s.num_computed_tokens < s.num_prompt_tokens
+            )
+            step_decode_tokens = sum(
+                1 for s in seqs if s.num_computed_tokens >= s.num_prompt_tokens
             )
         else:
             step_prefill_tokens = 0
+            step_decode_tokens = len(seqs)
 
         token_ids = engine.model_runner.run(seqs, is_prefill)
         engine.scheduler.postprocess(seqs, token_ids)
@@ -55,9 +61,10 @@ def run_pass(
 
         if is_prefill:
             computed_prefill_tokens += step_prefill_tokens
+            decode_tokens += step_decode_tokens
             prefill_time += dt
         else:
-            decode_tokens += len(seqs)
+            decode_tokens += step_decode_tokens
             decode_time += dt
 
     total_time = time.perf_counter() - total_start

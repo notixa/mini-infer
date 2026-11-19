@@ -24,7 +24,9 @@ class LLMEngine:
                  model_path: str | os.PathLike,
                  schedule_config: ScheduleConfig | None = None):
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.model_runner = ModelRunner(model_arch, model_path)
+        self.model_runner = ModelRunner(model_arch,
+                                        model_path,
+                                        schedule_config=schedule_config)
         if schedule_config is None:
             schedule_config = ScheduleConfig()
         schedule_config = replace(schedule_config,

@@ -92,24 +92,25 @@ def test_scheduler_max_num_seqs_limit() -> None:
     assert seqs1 == [s0, s1]
     scheduler.postprocess(seqs1, [100, 101])
 
-    # Step 2: Waiting still has s2, prefill takes priority over decode
+    # Step 2: Running takes priority; decode capped at max_num_seqs=2 so s2 stays waiting
     seqs2, is_prefill2 = scheduler.schedule()
-    assert is_prefill2 is True
-    assert seqs2 == [s2]
-    scheduler.postprocess(seqs2, [102])
+    assert is_prefill2 is False
+    assert seqs2 == [s0, s1]
+    assert list(scheduler.waiting) == [s2]
+    scheduler.postprocess(seqs2, [200, 201])
 
-    # Step 3: Decode capped at max_num_seqs=2, FCFS order preserved
-    seqs3, is_prefill3 = scheduler.schedule()
-    assert is_prefill3 is False
-    assert seqs3 == [s0, s1]
-    assert list(scheduler.running) == [s0, s1, s2]
-    scheduler.postprocess(seqs3, [200, 201])
-
-    # s0 and s1 reached max_tokens=2 and finished; only s2 remains
+    # s0 and s1 reached max_tokens=2 and finished; now s2 can enter prefill
     assert s0.status == SequenceStatus.FINISHED
     assert s1.status == SequenceStatus.FINISHED
-    assert list(scheduler.running) == [s2]
+    assert list(scheduler.running) == []
 
+    # Step 3: s2 prefills
+    seqs3, is_prefill3 = scheduler.schedule()
+    assert is_prefill3 is True
+    assert seqs3 == [s2]
+    scheduler.postprocess(seqs3, [102])
+
+    # Step 4: s2 decodes and finishes
     seqs4, is_prefill4 = scheduler.schedule()
     assert is_prefill4 is False
     assert seqs4 == [s2]
@@ -203,11 +204,11 @@ def test_scheduler_continuous_batching_dynamic_join_and_free() -> None:
     assert s_short.status == SequenceStatus.FINISHED
     assert len(scheduler.block_manager.free_block_ids) == 2
 
-    # Step 3: s_wait can now prefill immediately while s_long is still active!
+    # Step 3: Mixed batch! s_long decodes while s_wait prefills in the same step
     seqs3, is_prefill3 = scheduler.schedule()
     assert is_prefill3 is True
-    assert seqs3 == [s_wait]
-    scheduler.postprocess(seqs3, [301])
+    assert seqs3 == [s_long, s_wait]
+    scheduler.postprocess(seqs3, [203, 301])
 
     # Finish remaining decode steps for s_long and s_wait
     run_dummy_engine(scheduler, total_blocks)

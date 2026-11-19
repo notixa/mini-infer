@@ -26,7 +26,8 @@ def test_sequence_id_and_initial_state() -> None:
     assert s2.seq_id == s1.seq_id + 1
     assert s1.status == SequenceStatus.WAITING
     assert s1.block_table == []
-    assert s1.num_cached_tokens == 0
+    assert s1.num_hashed_blocks == 0
+    assert s1.num_computed_tokens == 0
     assert s1.num_scheduled_tokens == 0
 
 
