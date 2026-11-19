@@ -36,7 +36,7 @@ def run_dummy_engine(
 def test_scheduler_single_sequence_lifecycle() -> None:
     total_blocks = 4
     scheduler = Scheduler(num_blocks=total_blocks)
-    seq = Sequence([1, 2, 3, 4], max_tokens=3)
+    seq = Sequence([1, 2, 3, 4], max_tokens=3, temperature=0.0)
 
     assert scheduler.is_finished is True
     scheduler.add(seq)
@@ -80,9 +80,9 @@ def test_scheduler_max_num_seqs_limit() -> None:
     cfg = ScheduleConfig(max_num_seqs=2, max_num_batched_tokens=1024)
     scheduler = Scheduler(num_blocks=total_blocks, schedule_config=cfg)
 
-    s0 = Sequence([1, 2, 3], max_tokens=2)
-    s1 = Sequence([4, 5, 6], max_tokens=2)
-    s2 = Sequence([7, 8, 9], max_tokens=2)
+    s0 = Sequence([1, 2, 3], max_tokens=2, temperature=0.0)
+    s1 = Sequence([4, 5, 6], max_tokens=2, temperature=0.0)
+    s2 = Sequence([7, 8, 9], max_tokens=2, temperature=0.0)
     for s in (s0, s1, s2):
         scheduler.add(s)
 
@@ -123,9 +123,9 @@ def test_scheduler_max_num_batched_tokens_limit() -> None:
     cfg = ScheduleConfig(max_num_seqs=10, max_num_batched_tokens=20)
     scheduler = Scheduler(num_blocks=total_blocks, schedule_config=cfg)
 
-    s0 = Sequence(list(range(10)), max_tokens=1)
-    s1 = Sequence(list(range(10)), max_tokens=1)
-    s2 = Sequence(list(range(5)), max_tokens=1)
+    s0 = Sequence(list(range(10)), max_tokens=1, temperature=0.0)
+    s1 = Sequence(list(range(10)), max_tokens=1, temperature=0.0)
+    s2 = Sequence(list(range(5)), max_tokens=1, temperature=0.0)
     for s in (s0, s1, s2):
         scheduler.add(s)
 
@@ -153,8 +153,8 @@ def test_scheduler_eos_and_ignore_eos() -> None:
     cfg = ScheduleConfig(eos_token_id=eos)
     scheduler = Scheduler(num_blocks=total_blocks, schedule_config=cfg)
 
-    s_stop_on_eos = Sequence([1, 2, 3], max_tokens=5, ignore_eos=False)
-    s_ignore_eos = Sequence([4, 5, 6], max_tokens=3, ignore_eos=True)
+    s_stop_on_eos = Sequence([1, 2, 3], max_tokens=5, ignore_eos=False, temperature=0.0)
+    s_ignore_eos = Sequence([4, 5, 6], max_tokens=3, ignore_eos=True, temperature=0.0)
     scheduler.add(s_stop_on_eos)
     scheduler.add(s_ignore_eos)
 
@@ -181,9 +181,9 @@ def test_scheduler_continuous_batching_dynamic_join_and_free() -> None:
     total_blocks = 4
     scheduler = Scheduler(num_blocks=total_blocks)
 
-    s_short = Sequence(list(range(10)), max_tokens=2)          # 1 block
-    s_long = Sequence(list(range(bs + 4)), max_tokens=4)       # 2 blocks
-    s_wait = Sequence(list(range(bs + 4)), max_tokens=2)       # 2 blocks
+    s_short = Sequence(list(range(10)), max_tokens=2, temperature=0.0)          # 1 block
+    s_long = Sequence(list(range(bs + 4)), max_tokens=4, temperature=0.0)       # 2 blocks
+    s_wait = Sequence([10000 + i for i in range(bs + 4)], max_tokens=2, temperature=0.0)  # 2 blocks (unique prefix)
 
     for s in (s_short, s_long, s_wait):
         scheduler.add(s)
@@ -220,8 +220,8 @@ def test_scheduler_preemption_evicts_tail_and_recomputes() -> None:
     total_blocks = 2  # Tight pool: fits both prefills (1 block each), forces preempt on block cross
     scheduler = Scheduler(num_blocks=total_blocks)
 
-    s0 = Sequence(list(range(bs)), max_tokens=3)
-    s1 = Sequence(list(range(bs)), max_tokens=3)
+    s0 = Sequence(list(range(bs)), max_tokens=3, temperature=0.0)
+    s1 = Sequence(list(range(bs)), max_tokens=3, temperature=0.0)
     scheduler.add(s0)
     scheduler.add(s1)
 
@@ -258,8 +258,8 @@ def test_scheduler_preempt_self_when_last_running_seq() -> None:
     total_blocks = 3
     scheduler = Scheduler(num_blocks=total_blocks)
 
-    s0 = Sequence(list(range(bs)), max_tokens=3)
-    s1 = Sequence(list(range(bs)), max_tokens=3)
+    s0 = Sequence(list(range(bs)), max_tokens=3, temperature=0.0)
+    s1 = Sequence(list(range(bs)), max_tokens=3, temperature=0.0)
     scheduler.add(s0)
     scheduler.add(s1)
 

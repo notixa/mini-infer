@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from mini_infer.config.engine_config import CacheConfig
+from mini_infer.config.engine_config import CacheConfig, DeviceConfig
 from mini_infer.engine.block_manager import BlockManager
 from mini_infer.engine.model_runner import ModelRunner
 from mini_infer.engine.sequence import Sequence
@@ -82,13 +82,20 @@ def test_store_kvcache_noncontiguous_nonpow2_and_padding_slot() -> None:
                 assert torch.all(v_cache[bid, off] == -9.0)
 
 
+def _make_lightweight_runner() -> ModelRunner:
+    runner = ModelRunner.__new__(ModelRunner)
+    runner.cache_config = CacheConfig()
+    runner.device_config = DeviceConfig()
+    return runner
+
+
 def test_model_runner_prepare_prefill_and_decode_context() -> None:
     bs = CacheConfig.block_size
     bm = BlockManager(num_blocks=6)
-    runner = ModelRunner()
+    runner = _make_lightweight_runner()
 
-    s0 = Sequence(list(range(bs + 44)))  # 300 tokens -> 2 blocks
-    s1 = Sequence(list(range(bs)))       # 256 tokens -> 1 block
+    s0 = Sequence(list(range(bs + 44)), temperature=0.0)  # 300 tokens -> 2 blocks
+    s1 = Sequence(list(range(bs)), temperature=0.0)       # 256 tokens -> 1 block
     bm.allocate(s0)
     bm.allocate(s1)
 
@@ -140,16 +147,16 @@ def test_paged_attention_prefill_and_decode_matches_sdpa(dtype: torch.dtype) -> 
     scale = head_dim ** -0.5
 
     bm = BlockManager(num_blocks=num_blocks)
-    runner = ModelRunner()
+    runner = _make_lightweight_runner()
     attn = Attention(num_heads=num_heads, head_dim=head_dim, scale=scale, num_kv_heads=num_kv_heads)
     k_cache = torch.empty((num_blocks, bs, num_kv_heads, head_dim), device=device, dtype=dtype)
     v_cache = torch.empty_like(k_cache)
     attn.k_cache = k_cache
     attn.v_cache = v_cache
 
-    dummy = Sequence(list(range(bs)))
-    s0 = Sequence(list(range(bs - 1)))
-    s1 = Sequence(list(range(bs + 4)))
+    dummy = Sequence(list(range(bs)), temperature=0.0)
+    s0 = Sequence(list(range(bs - 1)), temperature=0.0)
+    s1 = Sequence(list(range(bs + 4)), temperature=0.0)
     bm.allocate(s0)
     bm.allocate(dummy)
     bm.allocate(s1)

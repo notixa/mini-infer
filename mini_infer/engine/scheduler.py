@@ -25,16 +25,20 @@ class Scheduler:
         num_batched_tokens = 0
         while self.waiting and len(scheduled_seqs) < self.max_num_seqs:
             seq = self.waiting[0]
-            if num_batched_tokens + len(seq.token_ids) > self.max_num_batched_tokens:
+            num_cached_blocks = self.block_manager.can_allocate(seq)
+            if num_cached_blocks == -1:
                 break
-            if not self.block_manager.can_allocate(seq):
+            num_new_tokens = len(
+                seq.token_ids
+            ) - num_cached_blocks * self.block_manager.cache_config.block_size
+            if num_batched_tokens + num_new_tokens > self.max_num_batched_tokens:
                 break
             self.block_manager.allocate(seq)
             seq.status = SequenceStatus.RUNNING
             self.waiting.popleft()
             self.running.append(seq)
             scheduled_seqs.append(seq)
-            num_batched_tokens += len(seq.token_ids)
+            num_batched_tokens += num_new_tokens
         if scheduled_seqs:
             return scheduled_seqs, True
 
@@ -61,6 +65,7 @@ class Scheduler:
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int]):
         for seq, token_id in zip(seqs, token_ids):
+            self.block_manager.hash_blocks(seq)
             seq.append_token(token_id)
             if not seq.ignore_eos and token_id == self.schedule_config.eos_token_id or seq.num_completion_tokens >= seq.max_tokens:
                 seq.status = SequenceStatus.FINISHED

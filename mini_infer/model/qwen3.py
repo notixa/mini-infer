@@ -3,7 +3,7 @@ from typing import cast
 import einops
 import torch
 
-from mini_infer.config.model_config import Qwen3Config
+from mini_infer.config.model_config.qwen3_config import Qwen3Config
 from mini_infer.layers.activation import SiluAndMul
 from mini_infer.layers.attention import Attention
 from mini_infer.layers.layernorm import RMSNorm

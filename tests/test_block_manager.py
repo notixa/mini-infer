@@ -20,8 +20,8 @@ def assert_block_pool_invariant(bm: BlockManager, total_blocks: int) -> None:
 
 
 def test_sequence_id_and_initial_state() -> None:
-    s1 = Sequence([1, 2, 3])
-    s2 = Sequence([4, 5])
+    s1 = Sequence([1, 2, 3], temperature=0.0)
+    s2 = Sequence([4, 5], temperature=0.0)
 
     assert s2.seq_id == s1.seq_id + 1
     assert s1.status == SequenceStatus.WAITING
@@ -33,17 +33,17 @@ def test_sequence_id_and_initial_state() -> None:
 def test_sequence_block_math_boundaries() -> None:
     bs = CacheConfig.block_size
 
-    s_one = Sequence(list(range(1)))
+    s_one = Sequence(list(range(1)), temperature=0.0)
     assert s_one.num_blocks == 1
     assert s_one.last_block_num_tokens == 1
     assert s_one.block(0) == [0]
 
-    s_exact = Sequence(list(range(bs)))
+    s_exact = Sequence(list(range(bs)), temperature=0.0)
     assert s_exact.num_blocks == 1
     assert s_exact.last_block_num_tokens == bs
     assert s_exact.block(0) == list(range(bs))
 
-    s_cross = Sequence(list(range(bs + 1)))
+    s_cross = Sequence(list(range(bs + 1)), temperature=0.0)
     assert s_cross.num_blocks == 2
     assert s_cross.last_block_num_tokens == 1
     assert s_cross.block(0) == list(range(bs))
@@ -59,13 +59,13 @@ def test_can_allocate_exact_and_insufficient_capacity() -> None:
     bs = CacheConfig.block_size
     bm = BlockManager(num_blocks=2)
 
-    seq_1_block = Sequence(list(range(bs)))           # needs 1 block
-    seq_2_blocks = Sequence(list(range(bs * 2)))      # needs 2 blocks (exact match)
-    seq_3_blocks = Sequence(list(range(bs * 2 + 1)))  # needs 3 blocks (exceeds pool)
+    seq_1_block = Sequence(list(range(bs)), temperature=0.0)           # needs 1 block
+    seq_2_blocks = Sequence(list(range(bs * 2)), temperature=0.0)      # needs 2 blocks (exact match)
+    seq_3_blocks = Sequence(list(range(bs * 2 + 1)), temperature=0.0)  # needs 3 blocks (exceeds pool)
 
-    assert bm.can_allocate(seq_1_block) is True
-    assert bm.can_allocate(seq_2_blocks) is True
-    assert bm.can_allocate(seq_3_blocks) is False
+    assert bm.can_allocate(seq_1_block) == 0
+    assert bm.can_allocate(seq_2_blocks) == 0
+    assert bm.can_allocate(seq_3_blocks) == -1
 
 
 def test_allocate_and_deallocate_conservation_and_reverse_free() -> None:
@@ -74,7 +74,7 @@ def test_allocate_and_deallocate_conservation_and_reverse_free() -> None:
     bm = BlockManager(num_blocks=total_blocks)
     assert_block_pool_invariant(bm, total_blocks)
 
-    seq = Sequence(list(range(bs * 2 + 3)))  # needs 3 blocks
+    seq = Sequence(list(range(bs * 2 + 3)), temperature=0.0)  # needs 3 blocks
     bm.allocate(seq)
 
     assert len(seq.block_table) == 3
@@ -94,7 +94,7 @@ def test_boundary_crossing_can_append_and_may_append() -> None:
     total_blocks = 3
     bm = BlockManager(num_blocks=total_blocks)
 
-    seq = Sequence(list(range(bs - 1)))  # 255 tokens -> 1 block
+    seq = Sequence(list(range(bs - 1)), temperature=0.0)  # 255 tokens -> 1 block
     bm.allocate(seq)
     assert len(seq.block_table) == 1
     assert_block_pool_invariant(bm, total_blocks)
@@ -120,7 +120,7 @@ def test_can_append_when_pool_exhausted() -> None:
     total_blocks = 1
     bm = BlockManager(num_blocks=total_blocks)
 
-    seq = Sequence(list(range(bs - 1)))  # uses the only block (block 0)
+    seq = Sequence(list(range(bs - 1)), temperature=0.0)  # uses the only block (block 0)
     bm.allocate(seq)
     assert len(bm.free_block_ids) == 0
 
@@ -139,13 +139,13 @@ def test_multi_sequence_allocation_and_out_of_order_deallocate() -> None:
     bm = BlockManager(num_blocks=total_blocks)
 
     seqs = [
-        Sequence(list(range(5))),           # 1 block
-        Sequence(list(range(bs))),          # 1 block
-        Sequence(list(range(bs * 2 + 1))),  # 3 blocks
+        Sequence(list(range(5)), temperature=0.0),           # 1 block
+        Sequence(list(range(bs)), temperature=0.0),          # 1 block
+        Sequence(list(range(bs * 2 + 1)), temperature=0.0),  # 3 blocks
     ]
 
     for seq in seqs:
-        assert bm.can_allocate(seq) is True
+        assert bm.can_allocate(seq) >= 0
         bm.allocate(seq)
         assert_block_pool_invariant(bm, total_blocks)
 

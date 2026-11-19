@@ -32,8 +32,13 @@ class ModelRunner:
         self.gpu_memory_utilization = gpu_memory_utilization
         self.model_config = get_config(model_arch, model_path)
         self.model_dtype: torch.dtype = getattr(torch, self.model_config.torch_dtype)
+        prev_dtype = torch.get_default_dtype()
         torch.set_default_dtype(self.model_dtype)
-        self.model = get_model(model_arch, self.model_config)
+        try:
+            self.model = get_model(model_arch, self.model_config).to(
+                self.device_config.device)
+        finally:
+            torch.set_default_dtype(prev_dtype)
         load_weight(self.model, model_path)
         self.model = self.model.eval()
         self.sampler = Sampler()
@@ -89,8 +94,8 @@ class ModelRunner:
         for seq in seqs:
             seqlen_q = len(seq.token_ids) - seq.num_cached_tokens
             seqlen_k = len(seq.token_ids)
-            input_ids.append(seq.token_ids[seq.num_cached_tokens:])
-            positions.append(
+            input_ids.extend(seq.token_ids[seq.num_cached_tokens:])
+            positions.extend(
                 [id for id in range(seq.num_cached_tokens, len(seq.token_ids))])
             sum_seqlens_q += seqlen_q
             sum_seqlens_k += seqlen_k
@@ -100,6 +105,7 @@ class ModelRunner:
             max_seqlen_k = max(max_seqlen_k, seqlen_k)
 
             max_num_blocks = max(max_num_blocks, seq.num_blocks)
+            if not seq.block_table: continue
             for i in range(seq.num_cached_tokens // self.cache_config.block_size,
                            seq.num_blocks):
                 bid = seq.block_table[i]
@@ -138,6 +144,12 @@ class ModelRunner:
             context_lens=None,
             block_tables=block_tables,
         )
+        input_ids = torch.tensor(input_ids,
+                                 dtype=torch.int64,
+                                 device=self.device_config.device)
+        positions = torch.tensor(positions,
+                                 dtype=torch.int64,
+                                 device=self.device_config.device)
         return input_ids, positions
 
     def prepare_decode_context(self, seqs: list[Sequence]):
@@ -148,9 +160,8 @@ class ModelRunner:
         max_num_blocks = 0
         for seq in seqs:
             seqlen_k = len(seq.token_ids)
-            input_ids.append(seq.token_ids[seq.num_cached_tokens:])
-            positions.append(
-                [id for id in range(seq.num_cached_tokens, len(seq.token_ids))])
+            input_ids.append(seq.token_ids[-1])
+            positions.append(len(seq.token_ids) - 1)
             context_lens.append(seqlen_k)
             max_num_blocks = max(max_num_blocks, seq.num_blocks)
             slot_mapping.append(seq.block_table[-1] * self.cache_config.block_size +
@@ -178,6 +189,12 @@ class ModelRunner:
             context_lens=context_lens,
             block_tables=block_tables,
         )
+        input_ids = torch.tensor(input_ids,
+                                 dtype=torch.int64,
+                                 device=self.device_config.device)
+        positions = torch.tensor(positions,
+                                 dtype=torch.int64,
+                                 device=self.device_config.device)
         return input_ids, positions
 
     @torch.inference_mode()
@@ -186,7 +203,9 @@ class ModelRunner:
             seqs) if is_prefill else self.prepare_decode_context(seqs)
         hidden = self.model(input_ids, positions)
         logits = self.model.compute_logits(hidden)
-        temperatures = [seq.temperature for seq in seqs]
+        temperatures = torch.tensor([seq.temperature for seq in seqs],
+                                    dtype=torch.float32,
+                                    device=self.device_config.device)
         sample_tokens = self.sampler(logits, temperatures)
         reset_context()
         return sample_tokens.tolist()

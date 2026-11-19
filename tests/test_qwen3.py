@@ -5,8 +5,8 @@ import pytest
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from mini_infer.config.engine_config import CacheConfig
-from mini_infer.config.model_config import Qwen3Config
+from mini_infer.config.engine_config import CacheConfig, DeviceConfig
+from mini_infer.config.model_config.qwen3_config import Qwen3Config
 from mini_infer.engine.block_manager import BlockManager
 from mini_infer.engine.model_runner import ModelRunner
 from mini_infer.engine.sequence import Sequence
@@ -74,10 +74,12 @@ def test_qwen3_prefill_and_decode_matches_huggingface() -> None:
     num_blocks = 4
     _kv_cache = _bind_kv_cache(model, cfg, num_blocks=num_blocks)
     bm = BlockManager(num_blocks=num_blocks)
-    runner = ModelRunner()
+    runner = ModelRunner.__new__(ModelRunner)
+    runner.cache_config = CacheConfig()
+    runner.device_config = DeviceConfig()
 
     prompts = ["The capital of France is", "1 + 1 ="]
-    seqs = [Sequence(tokenizer.encode(p)) for p in prompts]
+    seqs = [Sequence(tokenizer.encode(p), temperature=0.0) for p in prompts]
     for s in seqs:
         bm.allocate(s)
 
