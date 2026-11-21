@@ -1,4 +1,5 @@
 import os
+from typing import cast
 
 import torch
 
@@ -7,7 +8,7 @@ from mini_infer.config.model_config.model_config import get_config
 from mini_infer.engine.sequence import Sequence
 from mini_infer.layers.sampler import Sampler
 from mini_infer.model.model import get_model
-from mini_infer.utils.context import reset_context, set_context
+from mini_infer.utils.context import get_context, reset_context, set_context
 from mini_infer.utils.loader import load_weight
 
 
@@ -19,6 +20,7 @@ class ModelRunner:
                  cache_config: CacheConfig | None = None,
                  schedule_config: ScheduleConfig | None = None,
                  device_config: DeviceConfig | None = None,
+                 enforce_eager: bool = False,
                  gpu_memory_utilization=0.85):
         if cache_config is None:
             cache_config = CacheConfig()
@@ -44,6 +46,13 @@ class ModelRunner:
         self.sampler = Sampler()
         self.warmup_model()
         self.num_blocks = self.allocate_kv_cache()
+        self.enforce_eager = enforce_eager
+        self.graphs: dict[int, torch.cuda.CUDAGraph] = {}
+        self.graph_bs: list[int] = []
+        self.graph_vars: dict[str, torch.Tensor] = {}
+        self.graph_pool = None
+        if not self.enforce_eager:
+            self.capture_cudagraph()
 
     def warmup_model(self):
         torch.cuda.empty_cache()
@@ -198,9 +207,33 @@ class ModelRunner:
 
     @torch.inference_mode()
     def run(self, seqs: list[Sequence], is_prefill: bool):
-        input_ids, positions = self.prepare_prefill_context(
-            seqs) if is_prefill else self.prepare_decode_context(seqs)
-        hidden = self.model(input_ids, positions)
+        eager = is_prefill or self.enforce_eager or len(seqs) > self.graph_bs[-1]
+        if eager:
+            input_ids, positions = self.prepare_prefill_context(
+                seqs) if is_prefill else self.prepare_decode_context(seqs)
+            hidden = self.model(input_ids, positions)
+        else:
+            input_ids, positions = self.prepare_decode_context(seqs)
+            context = get_context()
+            bs = len(seqs)
+            graph_bs = next(x for x in self.graph_bs if x >= bs)
+            g = self.graph_vars
+            g["input_ids"][:bs].copy_(input_ids)
+            g["positions"][:bs].copy_(positions)
+            context.slot_mapping = cast(torch.Tensor, context.slot_mapping)
+            context.context_lens = cast(torch.Tensor, context.context_lens)
+            context.block_tables = cast(torch.Tensor, context.block_tables)
+            g["slot_mapping"][:bs].copy_(context.slot_mapping)
+            g["slot_mapping"][bs:graph_bs].fill_(-1)
+            g["context_lens"][:bs].copy_(context.context_lens)
+            g["context_lens"][bs:graph_bs].fill_(1)
+            cur_num_blocks = context.block_tables.shape[1]
+            g["block_tables"][:bs, :cur_num_blocks].copy_(context.block_tables)
+            g["block_tables"][bs:graph_bs].fill_(0)
+
+            self.graphs[graph_bs].replay()
+            hidden = g["outputs"][:bs]
+
         logits = self.model.compute_logits(hidden)
         temperatures = torch.tensor([seq.temperature for seq in seqs],
                                     dtype=torch.float32,
@@ -208,3 +241,56 @@ class ModelRunner:
         sample_tokens = self.sampler(logits, temperatures)
         reset_context()
         return sample_tokens.tolist()
+
+    @torch.inference_mode()
+    def capture_cudagraph(self):
+        max_bs = min(self.schedule_config.max_num_seqs, 512)
+        self.graph_bs = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
+        self.graph_bs = [bs for bs in self.graph_bs if bs <= max_bs]
+        max_num_blocks = (self.schedule_config.max_model_len +
+                          self.cache_config.block_size -
+                          1) // self.cache_config.block_size
+        device = self.device_config.device
+        input_ids = torch.zeros(max_bs, dtype=torch.int64, device=device)
+        positions = torch.zeros(max_bs, dtype=torch.int64, device=device)
+        slot_mapping = torch.full((max_bs, ), -1, dtype=torch.int32, device=device)
+        context_lens = torch.ones(max_bs, dtype=torch.int32, device=device)
+        block_tables = torch.zeros((max_bs, max_num_blocks),
+                                   dtype=torch.int32,
+                                   device=device)
+        outputs = torch.zeros((max_bs, self.model_config.hidden_size),
+                              dtype=self.model_dtype,
+                              device=device)
+
+        for bs in reversed(self.graph_bs):
+            graph = torch.cuda.CUDAGraph()
+            set_context(
+                is_prefill=False,
+                cu_seqlens_q=None,
+                cu_seqlens_k=None,
+                max_seqlen_q=0,
+                max_seqlen_k=0,
+                slot_mapping=slot_mapping[:bs],
+                context_lens=context_lens[:bs],
+                block_tables=block_tables[:bs],
+            )
+            outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
+            torch.cuda.synchronize()
+
+            with torch.cuda.graph(graph, self.graph_pool):
+                outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
+            if self.graph_pool is None:
+                self.graph_pool = graph.pool()
+
+            self.graphs[bs] = graph
+            torch.cuda.synchronize()
+            reset_context()
+
+        self.graph_vars = {
+            "input_ids": input_ids,
+            "positions": positions,
+            "slot_mapping": slot_mapping,
+            "context_lens": context_lens,
+            "block_tables": block_tables,
+            "outputs": outputs,
+        }

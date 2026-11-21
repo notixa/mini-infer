@@ -22,11 +22,13 @@ class LLMEngine:
     def __init__(self,
                  model_arch: str,
                  model_path: str | os.PathLike,
-                 schedule_config: ScheduleConfig | None = None):
+                 schedule_config: ScheduleConfig | None = None,
+                 enforce_eager: bool = False):
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         self.model_runner = ModelRunner(model_arch,
                                         model_path,
-                                        schedule_config=schedule_config)
+                                        schedule_config=schedule_config,
+                                        enforce_eager=enforce_eager)
         if schedule_config is None:
             schedule_config = ScheduleConfig()
         schedule_config = replace(schedule_config,
